@@ -9,60 +9,53 @@ from dotenv import load_dotenv
 from src.prompt import *
 import os
 
-app = Flask(__name__)
-
+# Load environment variables early
 load_dotenv()
 
-PINECONE_API_KEY=os.environ.get('PINECONE_API_KEY')
-OPENAI_API_KEY=os.environ.get('OPENAI_API_KEY')
+# Setup Flask
+app = Flask(__name__)
 
+# Set up API keys
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Set as environment variables (not always necessary but safe)
 os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 
+# Load embeddings and Pinecone index
 embeddings = download_hugging_face_embeddings()
-
-
 index_name = "medicalbot"
-
-# Embed each chunk and upsert the embeddings into your Pinecone index.
 docsearch = PineconeVectorStore.from_existing_index(
     index_name=index_name,
     embedding=embeddings
 )
+retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
-retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k":3})
-
-
+# Setup OpenAI LLM and RAG chain
 llm = OpenAI(temperature=0.4, max_tokens=500)
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ]
-)
-
+prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    ("human", "{input}")
+])
 question_answer_chain = create_stuff_documents_chain(llm, prompt)
 rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
-
+# Flask routes
 @app.route("/")
 def index():
     return render_template('chat.html')
 
-
-@app.route("/get", methods=["GET", "POST"])
+@app.route("/get", methods=["POST"])
 def chat():
-    msg = request.form["msg"]
-    input = msg
-    print(input)
+    msg = request.form.get("msg", "")
+    if not msg:
+        return "No input provided.", 400
     response = rag_chain.invoke({"input": msg})
-    print("Response : ", response["answer"])
     return str(response["answer"])
 
-
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))  # fallback to 10000 for local testing
-    app.run(host="0.0.0.0", port=port, debug=True)
-
+# Main execution block
+if __name__ == "__main__":
+    # Required for Render: bind to 0.0.0.0 and use PORT env variable
+    port = int(os.environ.get("PORT", 10000))  # Render sets this
+    app.run(host="0.0.0.0", port=port)
